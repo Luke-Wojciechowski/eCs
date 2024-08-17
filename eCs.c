@@ -3,9 +3,12 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
+#include <unistd.h>
+#include <assert.h>
 
 #define MAX_ENTITIES 10000
 #define MAX_COMPONENTS 64
+#define MAX_SYSTEMS 100
 #define LOOPS 10
 
 typedef uint32_t Entity;
@@ -24,7 +27,6 @@ typedef struct
     Component components[MAX_COMPONENTS];
     int count;
 } ComponentArray;
-
 
 typedef struct 
 {
@@ -49,10 +51,22 @@ typedef struct
     FilteredEntities filteredEntities;
 } System;
 
+typedef struct
+{
+    System* initSystems[MAX_SYSTEMS];
+    int initSystemsCount;
+    System* tickSystems[MAX_SYSTEMS];
+    int tickSystemsCount;
+} SystemsManager;
+
+typedef enum  
+{
+  InitSystem = 1,
+  TickSystem = 2
+} SystemType; 
 
 ComponentArray componentArrays[MAX_ENTITIES];
 EntityManager entityManager[MAX_ENTITIES];
-
 
 Entity create_entity() 
 {
@@ -194,6 +208,17 @@ bool has_component(Entity entity, int typeID)
     return false;
 }
 
+void* get_or_add_component(Entity entity, void* data, size_t dataSize, int typeID)
+{
+    void* component = get_component(entity, typeID);
+    
+    if(!component)
+    {
+        return add_component(entity, data, dataSize, typeID);
+    }
+
+    return component;
+}
 
 bool matches_filter(Entity entity, Filter* filter)
 {
@@ -246,6 +271,40 @@ void run_system(System* system)
     }
 }
 
+void register_system(SystemsManager* systemsManager, System* system, SystemType systemType)
+{
+    switch (systemType)
+    {
+    case InitSystem:
+
+        systemsManager->initSystems[systemsManager->initSystemsCount++] = system;
+        break;
+        
+    case TickSystem:
+
+        systemsManager->tickSystems[systemsManager->tickSystemsCount++] = system;
+        break;
+
+    default:
+        break;
+    }
+}
+
+void init_systems(SystemsManager* systemsManager)
+{
+    for (int i = 0; i < systemsManager->initSystemsCount; i++)
+    {
+        run_system(systemsManager->initSystems[i]);
+    } 
+}
+
+void tick_systems(SystemsManager* systemsManager)
+{
+    for (int i = 0; i < systemsManager->tickSystemsCount; i++)
+    {
+        run_system(systemsManager->tickSystems[i]);
+    } 
+}
 
 typedef struct {
     float x, y;
@@ -286,13 +345,14 @@ void move_entity(Entity entity)
     printf("Entity : %d position : %f ; %f \n", entity, positionComponent->x, positionComponent->y);
 }
 
-
-int main()
+void TestSystem()
 {
     Entity e1 = create_entity();
     Entity e2 = create_entity();
     Entity e3 = create_entity();
     Entity e4 = create_entity();
+
+    assert(e4 == 3);
 
     PositionComponent p1 = {0.0f, 0.0f};
     PositionComponent p2 = {10.0f, 10.0f};
@@ -313,6 +373,18 @@ int main()
     add_component(e3, &v2, sizeof(VelocityComponent), velocityTypeID);
     add_component(e4, &v2, sizeof(VelocityComponent), velocityTypeID);
 
+    assert(has_component(e1, positionTypeID));
+    assert(!has_component(e3, positionTypeID));
+
+    remove_component(e1, positionTypeID);
+
+    assert(!has_component(e1, positionTypeID));
+
+    add_component(e1, &p1, sizeof(PositionComponent), positionTypeID);
+
+    assert(has_component(e1, positionTypeID));
+
+
     Filter printFilter =  {{velocityTypeID}, 1};
     FilteredEntities printFilteredEntities = get_filtered_entities(&printFilter);
 
@@ -322,14 +394,19 @@ int main()
     System printEntitySystem = {print_entity, printFilteredEntities};
     System moveEntitySystem = {move_entity, moveFilteredEntities};
 
-    run_system(&printEntitySystem);
+    SystemsManager systemsManager = {.tickSystemsCount = 0, .initSystemsCount = 0};
+ 
+    register_system(&systemsManager, &printEntitySystem, TickSystem);
+    register_system(&systemsManager, &moveEntitySystem, TickSystem);
 
-    printf("\n------------------\n");
+    assert(systemsManager.tickSystemsCount == 2);
+
+    init_systems(&systemsManager);
 
     for (int i = 0; i < LOOPS; i++)
     {
         printf("\nloop no. %d started-------------- \n\n",i);
-        run_system(&moveEntitySystem);
+        tick_systems(&systemsManager);
         printf("\nloop no. %d  done---------------- \n",i);
     }
     
@@ -338,5 +415,10 @@ int main()
     destroy_entity(e3);
     destroy_entity(e4);
 
+}
+
+int main()
+{
+    TestSystem();
     return 0;
 }
